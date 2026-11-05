@@ -1,0 +1,6 @@
+.env
+__pycache__
+*.pyc
+.git
+uploaded_pdfs/*.pdf
+model_cache 

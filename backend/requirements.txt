@@ -6,6 +6,7 @@ numpy>=2.0.2
 langchain>=0.3.7,<0.4.0
 langchain-openai>=0.2.8,<0.3.0
 langchain-community>=0.3.7,<0.4.0
+fastembed
 fastapi>=0.115.4
 uvicorn>=0.32.0
 python-multipart>=0.0.12

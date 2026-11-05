@@ -1,26 +1,17 @@
 """
-M7 - LangChain RAG
+M7 - LangChain RAG (free stack)
 Concept: Organize the RAG workflow with LangChain
 
-Everything here does the SAME job as M2-M6 combined - PDF -> chunks ->
-embeddings -> vector search -> LLM answer. The difference is we now use
-LangChain's pre-built pieces instead of the ones we hand-wrote ourselves.
+Same pipeline as before: PDF -> chunks -> embeddings -> FAISS -> LLM answer.
+The only change is WHICH providers we plug in, so everything runs for free:
 
-Why bother, if M6 already worked? Two reasons:
-1. Less code to maintain for standard steps (loading, splitting,
-   vector stores) that LangChain has already solved well.
-2. LangChain gives us a common "interface" (Documents, Retrievers,
-   Chains) that plugs into a huge ecosystem - this becomes important
-   once we add things like streaming, memory, or agents later.
-
-It's worth understanding both versions: M6 shows you exactly what's
-happening under the hood (so nothing feels like "magic"), and M7 shows
-you the more productive way to build it once you understand the pieces.
+    Embeddings: OpenAIEmbeddings  ->  FastEmbedEmbeddings (runs locally, no API, no cost)
+    Chat model: OpenAI gpt-4o-mini ->  Groq (free tier) through its OpenAI-compatible API
 
 Mapping from our M2-M6 code to LangChain's equivalents:
     pdf_processor.py (M2)     -> PyPDFLoader
     text_splitter.py (M3)     -> RecursiveCharacterTextSplitter
-    embedding_service.py (M4) -> OpenAIEmbeddings
+    embedding_service.py (M4) -> FastEmbedEmbeddings
     vector_store.py (M5)      -> FAISS (langchain_community.vectorstores)
     rag_pipeline.py (M6)      -> create_retrieval_chain
 """
@@ -30,7 +21,8 @@ from dotenv import load_dotenv
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import FAISS
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_retrieval_chain
@@ -38,24 +30,24 @@ from langchain_core.prompts import ChatPromptTemplate
 
 load_dotenv()
 
-api_key = os.getenv("LLM_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
 
-if not api_key or api_key == "your_openai_api_key_here":
+if not groq_api_key:
     raise ValueError(
-        "LLM_API_KEY is missing. Open backend/.env and paste your real "
-        "OpenAI API key in place of the placeholder."
+        "GROQ_API_KEY is missing. Add GROQ_API_KEY=your_key to backend/.env "
+        "(locally) or to the environment variables on your host."
     )
 
-# LangChain's OpenAI classes read OPENAI_API_KEY from the environment by
-# default, so we set it explicitly here to keep using our LLM_API_KEY name.
-os.environ["OPENAI_API_KEY"] = api_key
+# Groq exposes an OpenAI-compatible endpoint, so ChatOpenAI works with it.
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+CHAT_MODEL = "openai/gpt-oss-120b"
 
-CHAT_MODEL = "gpt-4o-mini"
-EMBEDDING_MODEL = "text-embedding-3-small"
+# Small English embedding model, runs on CPU with ONNX (about 130 MB).
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
-# The same "answer only from context" instruction as M6's build_prompt(),
-# now expressed as a LangChain prompt template. {context} is filled in
-# automatically by create_stuff_documents_chain with the retrieved chunks.
+# Created once and reused, so the model is loaded only one time.
+embeddings = FastEmbedEmbeddings(model_name=EMBEDDING_MODEL)
+
 ANSWER_PROMPT = ChatPromptTemplate.from_template(
     """Answer the question using ONLY the context below.
 If the answer is not contained in the context, say "I don't know based on the provided document."
@@ -76,30 +68,16 @@ def ingest_pdf(pdf_path: str):
 
     Returns a LangChain retriever, ready to be plugged into a chain.
     """
-    # PyPDFLoader automatically gives each page its own Document object
-    # with page_content (the text) and metadata (including "page") -
-    # this replaces our manual pdf_processor.py page-number bookkeeping.
     loader = PyPDFLoader(pdf_path)
     documents = loader.load()
 
-    # RecursiveCharacterTextSplitter is a smarter version of our
-    # word-count chunker from M3: it tries to split on paragraph/sentence
-    # boundaries first, only falling back to hard cuts when necessary.
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     split_documents = splitter.split_documents(documents)
 
-    print(f"Ingesting {len(split_documents)} chunks from {len(documents)} pages... "
-          f"(this calls the embeddings API once per chunk)")
+    print(f"Ingesting {len(split_documents)} chunks from {len(documents)} pages...")
 
-    embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
-
-    # FAISS.from_documents does what our build_index() did manually:
-    # embeds every chunk and stores the vectors + text/metadata together.
     vectorstore = FAISS.from_documents(split_documents, embeddings)
 
-    # as_retriever() wraps the vector store as a "retriever" - a standard
-    # LangChain interface that just takes a question and returns Documents.
-    # k=3 mirrors the top_k=3 we used with our own search() in M5.
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
     return retriever
@@ -109,17 +87,15 @@ def build_rag_chain(retriever):
     """
     Wire the retriever and the LLM together into one chain:
     question -> retriever -> context -> LLM -> answer
-
-    This replaces our hand-written ask_question() from M6.
     """
-    llm = ChatOpenAI(model=CHAT_MODEL)
+    llm = ChatOpenAI(
+        model=CHAT_MODEL,
+        api_key=groq_api_key,
+        base_url=GROQ_BASE_URL,
+        temperature=0,
+    )
 
-    # create_stuff_documents_chain "stuffs" all retrieved Documents into
-    # the {context} slot of our prompt, then calls the LLM.
     combine_docs_chain = create_stuff_documents_chain(llm, ANSWER_PROMPT)
-
-    # create_retrieval_chain wires it all together: given {"input": question},
-    # it first calls the retriever, then feeds the results into combine_docs_chain.
     rag_chain = create_retrieval_chain(retriever, combine_docs_chain)
 
     return rag_chain
@@ -127,13 +103,11 @@ def build_rag_chain(retriever):
 
 def ask_question(rag_chain, question: str) -> dict:
     """
-    Run a question through the chain and return the answer plus source pages,
-    in the same shape as M6's ask_question() for an easy comparison.
+    Run a question through the chain and return the answer plus source pages.
     """
     result = rag_chain.invoke({"input": question})
 
-    # result["context"] is the list of retrieved Documents; each one's
-    # metadata["page"] is the 0-indexed page number PyPDFLoader assigned.
+    # Each retrieved Document's metadata["page"] is the 0-indexed page number.
     sources = sorted({doc.metadata.get("page", -1) + 1 for doc in result["context"]})
 
     return {"answer": result["answer"], "sources": sources}
@@ -148,7 +122,7 @@ if __name__ == "__main__":
 
     pdf_path = sys.argv[1]
 
-    print("=== AI Document Intelligence - M7: LangChain RAG ===\n")
+    print("=== AI Document Intelligence - M7: LangChain RAG (free stack) ===\n")
     retriever = ingest_pdf(pdf_path)
     rag_chain = build_rag_chain(retriever)
     print("Ingestion complete.\n")
