@@ -1,5 +1,39 @@
-# 📄 AI Document Intelligence
+# AI Document Intelligence
 
+Upload a PDF and ask questions about it. The API splits the PDF into chunks, turns them into embeddings, stores them in a FAISS vector index, and uses an LLM to answer using only the retrieved text (RAG), with the source page numbers.
+
+## Live Demo
+
+- **API Docs (Swagger):** YOUR-RENDER-URL/docs
+
+> Runs on a free tier, so the first request after inactivity can take around 1 minute to wake up. Uploaded documents are kept in memory and are cleared when the server restarts, so ask your questions right after uploading. Please upload only public documents.
+
+### How to try it
+
+1. Open the API docs link above.
+2. `POST /documents/upload`: upload a small text-based PDF (2-10 pages). Copy the returned `document_id`.
+3. `POST /chat/ask`: send `{"document_id": "...", "question": "What is this document about?"}`.
+4. The response contains the answer and the page numbers it came from.
+
+## Features
+
+- PDF text extraction and chunking with overlap
+- Local embeddings (fastembed, ONNX) with FAISS similarity search
+- LangChain retrieval chain with a grounded prompt ("answer only from the document")
+- Source page citations in every answer
+- REST API built with FastAPI (upload, list, delete, ask)
+- Dockerised and deployed on Render
+
+## Tech Stack
+
+FastAPI · LangChain · FAISS · fastembed (bge-small) · Groq LLM · Docker · Render
+
+## Roadmap
+
+- Next.js chat frontend
+- MongoDB for persistent documents and chat history
+- User authentication
+- 
 **Upload PDFs, ask questions, get answers with page-level citations (RAG)**
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
