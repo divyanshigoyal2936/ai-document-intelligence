@@ -1,4 +1,6 @@
 # AI Document Intelligence
+[![Live API Docs](https://img.shields.io/badge/Live_API_Docs-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://ai-document-intelligence-api-9hen.onrender.com/docs)
+[![Interactive Playground](https://img.shields.io/badge/API_Playground-Swagger_UI-85EA2D?style=for-the-badge&logo=swagger&logoColor=black)](https://ai-document-intelligence-api-9hen.onrender.com/docs)
 
 Upload a PDF and ask questions about it. The API splits the PDF into chunks, turns them into embeddings, stores them in a FAISS vector index, and uses an LLM to answer using only the retrieved text (RAG), with the source page numbers.
 
